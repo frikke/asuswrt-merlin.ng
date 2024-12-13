@@ -5,7 +5,7 @@
  *             packet encryption, packet authentication, and
  *             packet compression.
  *
- *  Copyright (C) 2012-2023 Heiko Hund <heiko.hund@sophos.com>
+ *  Copyright (C) 2012-2024 Heiko Hund <heiko.hund@sophos.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2
@@ -34,11 +34,7 @@
 #include <shellapi.h>
 #include <mstcpip.h>
 
-#ifdef HAVE_VERSIONHELPERS_H
 #include <versionhelpers.h>
-#else
-#include "compat-versionhelpers.h"
-#endif
 
 #include "openvpn-msg.h"
 #include "validate.h"
@@ -93,6 +89,7 @@ typedef enum {
     undo_dns6,
     undo_domain,
     undo_ring_buffer,
+    undo_wins,
     _undo_type_max
 } undo_type_t;
 typedef list_item_t *undo_lists_t[_undo_type_max];
@@ -109,6 +106,18 @@ typedef struct {
     struct tun_ring *receive_ring;
 } ring_buffer_maps_t;
 
+typedef union {
+    message_header_t header;
+    address_message_t address;
+    route_message_t route;
+    flush_neighbors_message_t flush_neighbors;
+    block_dns_message_t block_dns;
+    dns_cfg_message_t dns;
+    enable_dhcp_message_t dhcp;
+    register_ring_buffers_message_t rrb;
+    set_mtu_message_t mtu;
+    wins_cfg_message_t wins;
+} pipe_message_t;
 
 static DWORD
 AddListItem(list_item_t **pfirst, LPVOID data)
@@ -1084,6 +1093,63 @@ out:
 }
 
 /**
+ * Run the command: netsh interface ip $action wins $if_name [static] $addr
+ * @param  action      "delete", "add" or "set"
+ * @param  if_name     "name_of_interface"
+ * @param  addr        IPv4 address as a string
+ *
+ * If addr is null and action = "delete" all addresses are deleted.
+ * if action = "set" then "static" is added before $addr
+ */
+static DWORD
+netsh_wins_cmd(const wchar_t *action, const wchar_t *if_name, const wchar_t *addr)
+{
+    DWORD err = 0;
+    int timeout = 30000; /* in msec */
+    wchar_t argv0[MAX_PATH];
+    wchar_t *cmdline = NULL;
+    const wchar_t *addr_static = (wcscmp(action, L"set") == 0) ? L"static" : L"";
+
+    if (!addr)
+    {
+        if (wcscmp(action, L"delete") == 0)
+        {
+            addr = L"all";
+        }
+        else /* nothing to do -- return success*/
+        {
+            goto out;
+        }
+    }
+
+    /* Path of netsh */
+    openvpn_swprintf(argv0, _countof(argv0), L"%ls\\%ls", get_win_sys_path(), L"netsh.exe");
+
+    /* cmd template:
+     * netsh interface ip $action wins $if_name $static $addr
+     */
+    const wchar_t *fmt = L"netsh interface ip %ls wins \"%ls\" %ls %ls";
+
+    /* max cmdline length in wchars -- include room for worst case and some */
+    size_t ncmdline = wcslen(fmt) + wcslen(if_name) + wcslen(action) + wcslen(addr)
+                      +wcslen(addr_static) + 32 + 1;
+    cmdline = malloc(ncmdline * sizeof(wchar_t));
+    if (!cmdline)
+    {
+        err = ERROR_OUTOFMEMORY;
+        goto out;
+    }
+
+    openvpn_swprintf(cmdline, ncmdline, fmt, action, if_name, addr_static, addr);
+
+    err = ExecCommand(argv0, cmdline, timeout);
+
+out:
+    free(cmdline);
+    return err;
+}
+
+/**
  * Run command: wmic nicconfig (InterfaceIndex=$if_index) call $action ($data)
  * @param  if_index    "index of interface"
  * @param  action      e.g., "SetDNSDomain"
@@ -1153,7 +1219,7 @@ CmpWString(LPVOID item, LPVOID str)
 
 /**
  * Set interface specific DNS domain suffix
- * @param  if_name    name of the the interface
+ * @param  if_name    name of the interface
  * @param  domain     a single domain name
  * @param  lists      pointer to the undo lists. If NULL
  *                    undo lists are not altered.
@@ -1291,6 +1357,86 @@ HandleDNSConfigMessage(const dns_cfg_message_t *msg, undo_lists_t *lists)
     if (msg->domains[0])
     {
         err = SetDNSDomain(wide_name, msg->domains, lists);
+    }
+
+out:
+    free(wide_name);
+    return err;
+}
+
+static DWORD
+HandleWINSConfigMessage(const wins_cfg_message_t *msg, undo_lists_t *lists)
+{
+    DWORD err = 0;
+    wchar_t addr[16]; /* large enough to hold string representation of an ipv4 */
+    int addr_len = msg->addr_len;
+
+    /* sanity check */
+    if (addr_len > _countof(msg->addr))
+    {
+        addr_len = _countof(msg->addr);
+    }
+
+    if (!msg->iface.name[0]) /* interface name is required */
+    {
+        return ERROR_MESSAGE_DATA;
+    }
+
+    /* use a non-const reference with limited scope to enforce null-termination of strings from client */
+    {
+        wins_cfg_message_t *msgptr = (wins_cfg_message_t *)msg;
+        msgptr->iface.name[_countof(msg->iface.name) - 1] = '\0';
+    }
+
+    wchar_t *wide_name = utf8to16(msg->iface.name); /* utf8 to wide-char */
+    if (!wide_name)
+    {
+        return ERROR_OUTOFMEMORY;
+    }
+
+    /* We delete all current addresses before adding any
+     * OR if the message type is del_wins_cfg
+     */
+    if (addr_len > 0 || msg->header.type == msg_del_wins_cfg)
+    {
+        err = netsh_wins_cmd(L"delete", wide_name, NULL);
+        if (err)
+        {
+            goto out;
+        }
+        free(RemoveListItem(&(*lists)[undo_wins], CmpWString, wide_name));
+    }
+
+    if (msg->header.type == msg_del_wins_cfg)
+    {
+        goto out;  /* job done */
+    }
+
+    for (int i = 0; i < addr_len; ++i)
+    {
+        RtlIpv4AddressToStringW(&msg->addr[i].ipv4, addr);
+        err = netsh_wins_cmd(i == 0 ? L"set" : L"add", wide_name, addr);
+        if (i == 0 && err)
+        {
+            goto out;
+        }
+        /* We do not check for duplicate addresses, so any error in adding
+         * additional addresses is ignored.
+         */
+    }
+
+    err = 0;
+
+    if (addr_len > 0)
+    {
+        wchar_t *tmp_name = _wcsdup(wide_name);
+        if (!tmp_name || AddListItem(&(*lists)[undo_wins], tmp_name))
+        {
+            free(tmp_name);
+            netsh_wins_cmd(L"delete", wide_name, NULL);
+            err = ERROR_OUTOFMEMORY;
+            goto out;
+        }
     }
 
 out:
@@ -1476,18 +1622,7 @@ static VOID
 HandleMessage(HANDLE pipe, HANDLE ovpn_proc,
               DWORD bytes, DWORD count, LPHANDLE events, undo_lists_t *lists)
 {
-    DWORD read;
-    union {
-        message_header_t header;
-        address_message_t address;
-        route_message_t route;
-        flush_neighbors_message_t flush_neighbors;
-        block_dns_message_t block_dns;
-        dns_cfg_message_t dns;
-        enable_dhcp_message_t dhcp;
-        register_ring_buffers_message_t rrb;
-        set_mtu_message_t mtu;
-    } msg;
+    pipe_message_t msg;
     ack_message_t ack = {
         .header = {
             .type = msg_acknowledgement,
@@ -1497,7 +1632,7 @@ HandleMessage(HANDLE pipe, HANDLE ovpn_proc,
         .error_number = ERROR_MESSAGE_DATA
     };
 
-    read = ReadPipeAsync(pipe, &msg, bytes, count, events);
+    DWORD read = ReadPipeAsync(pipe, &msg, bytes, count, events);
     if (read != bytes || read < sizeof(msg.header) || read != msg.header.size)
     {
         goto out;
@@ -1545,6 +1680,11 @@ HandleMessage(HANDLE pipe, HANDLE ovpn_proc,
         case msg_add_dns_cfg:
         case msg_del_dns_cfg:
             ack.error_number = HandleDNSConfigMessage(&msg.dns, lists);
+            break;
+
+        case msg_add_wins_cfg:
+        case msg_del_wins_cfg:
+            ack.error_number = HandleWINSConfigMessage(&msg.wins, lists);
             break;
 
         case msg_enable_dhcp:
@@ -1606,6 +1746,10 @@ Undo(undo_lists_t *lists)
 
                 case undo_dns6:
                     DeleteDNS(AF_INET6, item->data);
+                    break;
+
+                case undo_wins:
+                    netsh_wins_cmd(L"delete", item->data, NULL);
                     break;
 
                 case undo_domain:
@@ -1915,6 +2059,13 @@ RunOpenvpn(LPVOID p)
             break;
         }
 
+        if (bytes > sizeof(pipe_message_t))
+        {
+            /* process at the other side of the pipe is misbehaving, shut it down */
+            MsgToEventLog(MSG_FLAGS_ERROR, TEXT("OpenVPN process sent too large payload length to the pipe (%lu bytes), it will be terminated"), bytes);
+            break;
+        }
+
         HandleMessage(ovpn_pipe, proc_info.hProcess, bytes, 1, &exit_event, &undo_lists);
     }
 
@@ -1985,71 +2136,48 @@ ServiceCtrlInteractive(DWORD ctrl_code, DWORD event, LPVOID data, LPVOID ctx)
 static HANDLE
 CreateClientPipeInstance(VOID)
 {
-    TCHAR pipe_name[256]; /* The entire pipe name string can be up to 256 characters long according to MSDN. */
-    HANDLE pipe = NULL;
-    PACL old_dacl, new_dacl;
-    PSECURITY_DESCRIPTOR sd;
-    static EXPLICIT_ACCESS ea[2];
-    static BOOL initialized = FALSE;
-    DWORD flags = PIPE_ACCESS_DUPLEX | WRITE_DAC | FILE_FLAG_OVERLAPPED;
+    /*
+     * allow all access for local system
+     * deny FILE_CREATE_PIPE_INSTANCE for everyone
+     * allow read/write for authenticated users
+     * deny all access to anonymous
+     */
+    const TCHAR *sddlString = TEXT("D:(A;OICI;GA;;;S-1-5-18)(D;OICI;0x4;;;S-1-1-0)(A;OICI;GRGW;;;S-1-5-11)(D;;GA;;;S-1-5-7)");
 
-    if (!initialized)
+    PSECURITY_DESCRIPTOR sd = NULL;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddlString, SDDL_REVISION_1, &sd, NULL))
     {
-        PSID everyone, anonymous;
-
-        ConvertStringSidToSid(TEXT("S-1-1-0"), &everyone);
-        ConvertStringSidToSid(TEXT("S-1-5-7"), &anonymous);
-
-        ea[0].grfAccessPermissions = FILE_GENERIC_WRITE;
-        ea[0].grfAccessMode = GRANT_ACCESS;
-        ea[0].grfInheritance = NO_INHERITANCE;
-        ea[0].Trustee.pMultipleTrustee = NULL;
-        ea[0].Trustee.MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
-        ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-        ea[0].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-        ea[0].Trustee.ptstrName = (LPTSTR) everyone;
-
-        ea[1].grfAccessPermissions = 0;
-        ea[1].grfAccessMode = REVOKE_ACCESS;
-        ea[1].grfInheritance = NO_INHERITANCE;
-        ea[1].Trustee.pMultipleTrustee = NULL;
-        ea[1].Trustee.MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
-        ea[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-        ea[1].Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-        ea[1].Trustee.ptstrName = (LPTSTR) anonymous;
-
-        flags |= FILE_FLAG_FIRST_PIPE_INSTANCE;
-        initialized = TRUE;
+        MsgToEventLog(M_SYSERR, TEXT("ConvertStringSecurityDescriptorToSecurityDescriptor failed."));
+        return INVALID_HANDLE_VALUE;
     }
 
+    /* Set up SECURITY_ATTRIBUTES */
+    SECURITY_ATTRIBUTES sa = {0};
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.lpSecurityDescriptor = sd;
+    sa.bInheritHandle = FALSE;
+
+    DWORD flags = PIPE_ACCESS_DUPLEX | WRITE_DAC | FILE_FLAG_OVERLAPPED;
+
+    static BOOL first = TRUE;
+    if (first)
+    {
+        flags |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+        first = FALSE;
+    }
+
+    TCHAR pipe_name[256]; /* The entire pipe name string can be up to 256 characters long according to MSDN. */
     openvpn_swprintf(pipe_name, _countof(pipe_name), TEXT("\\\\.\\pipe\\" PACKAGE "%ls\\service"), service_instance);
-    pipe = CreateNamedPipe(pipe_name, flags,
-                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
-                           PIPE_UNLIMITED_INSTANCES, 1024, 1024, 0, NULL);
+    HANDLE pipe = CreateNamedPipe(pipe_name, flags,
+                                  PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_REJECT_REMOTE_CLIENTS,
+                                  PIPE_UNLIMITED_INSTANCES, 1024, 1024, 0, &sa);
+
+    LocalFree(sd);
+
     if (pipe == INVALID_HANDLE_VALUE)
     {
         MsgToEventLog(M_SYSERR, TEXT("Could not create named pipe"));
         return INVALID_HANDLE_VALUE;
-    }
-
-    if (GetSecurityInfo(pipe, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
-                        NULL, NULL, &old_dacl, NULL, &sd) != ERROR_SUCCESS)
-    {
-        MsgToEventLog(M_SYSERR, TEXT("Could not get pipe security info"));
-        return CloseHandleEx(&pipe);
-    }
-
-    if (SetEntriesInAcl(2, ea, old_dacl, &new_dacl) != ERROR_SUCCESS)
-    {
-        MsgToEventLog(M_SYSERR, TEXT("Could not set entries in new acl"));
-        return CloseHandleEx(&pipe);
-    }
-
-    if (SetSecurityInfo(pipe, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
-                        NULL, NULL, new_dacl, NULL) != ERROR_SUCCESS)
-    {
-        MsgToEventLog(M_SYSERR, TEXT("Could not set pipe security info"));
-        return CloseHandleEx(&pipe);
     }
 
     return pipe;

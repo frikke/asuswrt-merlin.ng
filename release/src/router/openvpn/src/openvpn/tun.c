@@ -5,7 +5,7 @@
  *             packet encryption, packet authentication, and
  *             packet compression.
  *
- *  Copyright (C) 2002-2023 OpenVPN Inc <sales@openvpn.net>
+ *  Copyright (C) 2002-2024 OpenVPN Inc <sales@openvpn.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2
@@ -31,8 +31,6 @@
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
-#elif defined(_MSC_VER)
-#include "config-msvc.h"
 #endif
 
 #include "syshead.h"
@@ -149,17 +147,16 @@ out:
     return ret;
 }
 
-static bool
+static void
 do_dns_domain_service(bool add, const struct tuntap *tt)
 {
-    bool ret = false;
     ack_message_t ack;
     struct gc_arena gc = gc_new();
     HANDLE pipe = tt->options.msg_channel;
 
     if (!tt->options.domain) /* no  domain to add or delete */
     {
-        return true;
+        goto out;
     }
 
     /* Use dns_cfg_msg with addr_len = 0 for setting only the DOMAIN */
@@ -197,17 +194,14 @@ do_dns_domain_service(bool add, const struct tuntap *tt)
     }
 
     msg(M_INFO, "DNS domain %s using service", (add ? "set" : "deleted"));
-    ret = true;
 
 out:
     gc_free(&gc);
-    return ret;
 }
 
-static bool
+static void
 do_dns_service(bool add, const short family, const struct tuntap *tt)
 {
-    bool ret = false;
     ack_message_t ack;
     struct gc_arena gc = gc_new();
     HANDLE pipe = tt->options.msg_channel;
@@ -215,9 +209,10 @@ do_dns_service(bool add, const short family, const struct tuntap *tt)
     int addr_len = add ? len : 0;
     const char *ip_proto_name = family == AF_INET6 ? "IPv6" : "IPv4";
 
-    if (addr_len == 0 && add) /* no addresses to add */
+    if (len == 0)
     {
-        return true;
+        /* nothing to do */
+        goto out;
     }
 
     /* Use dns_cfg_msg with domain = "" for setting only the DNS servers */
@@ -274,11 +269,72 @@ do_dns_service(bool add, const short family, const struct tuntap *tt)
     }
 
     msg(M_INFO, "%s dns servers %s using service", ip_proto_name, (add ? "set" : "deleted"));
-    ret = true;
 
 out:
     gc_free(&gc);
-    return ret;
+}
+
+static void
+do_wins_service(bool add, const struct tuntap *tt)
+{
+    ack_message_t ack;
+    struct gc_arena gc = gc_new();
+    HANDLE pipe = tt->options.msg_channel;
+    int addr_len = add ? tt->options.wins_len : 0;
+
+    if (tt->options.wins_len == 0)
+    {
+        /* nothing to do */
+        goto out;
+    }
+
+    wins_cfg_message_t wins = {
+        .header = {
+            (add ? msg_add_wins_cfg : msg_del_wins_cfg),
+            sizeof(wins_cfg_message_t),
+            0
+        },
+        .iface = {.index = tt->adapter_index, .name = "" },
+        .addr_len = addr_len
+    };
+
+    /* interface name is required */
+    strncpy(wins.iface.name, tt->actual_name, sizeof(wins.iface.name));
+    wins.iface.name[sizeof(wins.iface.name) - 1] = '\0';
+
+    if (addr_len > _countof(wins.addr))
+    {
+        addr_len = _countof(wins.addr);
+        wins.addr_len = addr_len;
+        msg(M_WARN, "Number of WINS addresses sent to service truncated to %d",
+            addr_len);
+    }
+
+    for (int i = 0; i < addr_len; ++i)
+    {
+        wins.addr[i].ipv4.s_addr = htonl(tt->options.wins[i]);
+    }
+
+    msg(D_LOW, "%s WINS servers on '%s' (if_index = %d) using service",
+        (add ? "Setting" : "Deleting"), wins.iface.name, wins.iface.index);
+
+    if (!send_msg_iservice(pipe, &wins, sizeof(wins), &ack, "TUN"))
+    {
+        goto out;
+    }
+
+    if (ack.error_number != NO_ERROR)
+    {
+        msg(M_WARN, "TUN: %s WINS failed using service: %s [status=%u if_name=%s]",
+            (add ? "adding" : "deleting"), strerror_win32(ack.error_number, &gc),
+            ack.error_number, wins.iface.name);
+        goto out;
+    }
+
+    msg(M_INFO, "WINS servers %s using service", (add ? "set" : "deleted"));
+
+out:
+    gc_free(&gc);
 }
 
 static bool
@@ -335,7 +391,7 @@ do_dns_domain_wmic(bool add, const struct tuntap *tt)
     }
 
     struct argv argv = argv_new();
-    argv_printf(&argv, "%s%s nicconfig where (InterfaceIndex=%ld) call SetDNSDomain %s",
+    argv_printf(&argv, "%s%s nicconfig where (InterfaceIndex=%ld) call SetDNSDomain '%s'",
                 get_win_sys_path(), WMIC_PATH_SUFFIX, tt->adapter_index, add ? tt->options.domain : "");
     exec_command("WMIC", &argv, 1, M_WARN);
 
@@ -1557,6 +1613,7 @@ do_ifconfig_ipv4(struct tuntap *tt, const char *ifname, int tun_mtu,
         do_address_service(true, AF_INET, tt);
         do_dns_service(true, AF_INET, tt);
         do_dns_domain_service(true, tt);
+        do_wins_service(true, tt);
     }
     else
     {
@@ -6761,6 +6818,14 @@ void
 open_tun(const char *dev, const char *dev_type, const char *dev_node, struct tuntap *tt,
          openvpn_net_ctx_t *ctx)
 {
+    if ((tt->options.dhcp_options & DHCP_OPTIONS_DHCP_REQUIRED)
+        && tt->windows_driver != WINDOWS_DRIVER_TAP_WINDOWS6)
+    {
+        msg(M_WARN, "Some --dhcp-option or --dns options require DHCP server,"
+            " which is not supported by the selected %s driver. They will be"
+            " ignored.", print_windows_driver(tt->windows_driver));
+    }
+
     /* dco-win already opened the device, which handle we treat as socket */
     if (tuntap_is_dco_win(tt))
     {
@@ -6949,10 +7014,7 @@ close_tun(struct tuntap *tt, openvpn_net_ctx_t *ctx)
             {
                 do_dns_domain_service(false, tt);
             }
-            if (tt->options.dns6_len > 0)
-            {
-                do_dns_service(false, AF_INET6, tt);
-            }
+            do_dns_service(false, AF_INET6, tt);
             delete_route_connected_v6_net(tt);
             do_address_service(false, AF_INET6, tt);
         }
@@ -6979,6 +7041,7 @@ close_tun(struct tuntap *tt, openvpn_net_ctx_t *ctx)
         }
         else if (tt->options.msg_channel)
         {
+            do_wins_service(false, tt);
             do_dns_domain_service(false, tt);
             do_dns_service(false, AF_INET, tt);
             do_address_service(false, AF_INET, tt);

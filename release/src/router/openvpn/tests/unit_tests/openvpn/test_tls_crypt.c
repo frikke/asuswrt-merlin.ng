@@ -23,8 +23,6 @@
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
-#elif defined(_MSC_VER)
-#include "config-msvc.h"
 #endif
 
 #include "syshead.h"
@@ -37,8 +35,6 @@
 #include <cmocka.h>
 
 #include "tls_crypt.c"
-
-#include "mock_msg.h"
 
 /* Define this function here as dummy since including the ssl_*.c files
  * leads to having to include even more unrelated code */
@@ -118,7 +114,7 @@ __wrap_buffer_write_file(const char *filename, const struct buffer *buf)
     check_expected(filename);
     check_expected(pem);
 
-    return mock();
+    return mock_type(bool);
 }
 
 struct buffer
@@ -126,7 +122,7 @@ __wrap_buffer_read_from_file(const char *filename, struct gc_arena *gc)
 {
     check_expected(filename);
 
-    const char *pem_str = (const char *) mock();
+    const char *pem_str = mock_ptr_type(const char *);
     struct buffer ret = alloc_buf_gc(strlen(pem_str) + 1, gc);
     buf_write(&ret, pem_str, strlen(pem_str) + 1);
 

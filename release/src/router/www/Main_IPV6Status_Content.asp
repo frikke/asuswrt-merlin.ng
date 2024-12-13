@@ -129,39 +129,47 @@ function show_ipv6clients() {
 
 
 function show_pinholes() {
-	var code, i, rule
+	var code, i, line;
 
-	code = '<table width="100%" id="pinholes" border="1" align="center" cellpadding="4" cellspacing="0" bordercolor="#6b8fa3" class="FormTable_table">';
-	code += '<thead><tr><td colspan="5">IPv6 pinhole rules opened in the firewall through UPnP/IGD2</td></tr></thead>';
-	code += '<th width=34%">Remote</th>';
-	code += '<th width=12%">Port</th>';
-	code += '<th width=34%">Local</th>';
-	code += '<th width=12%">Port</th>';
-	code += '<th width=8%">Proto</th>';
+	code = '<table width="100%" border="1" align="center" cellpadding="4" cellspacing="0" bordercolor="#6b8fa3"class="FormTable_table">';
+	code += '<thead><tr><td colspan="6">UPnP IGDv2 &amp; PCP IPv6 port mappings</td></tr></thead>';
+	code += '<tr><th width="6%">Proto</th>';
+	code += '<th width="32%">Remote IP</th>';
+	code += '<th width="9%">Rem Port</th>';
+	code += '<th width="32%">Local IP</th>';
+	code += '<th width="9%">Local Port</th>';
+	code += '<th width="12%">Time left</th>';
 	code += '</tr>';
 
-        if ("<% nvram_get("upnp_pinhole_enable"); %>" == "0") {
-                code += '<tr><td colspan="5">Pinhole support is currently disabled.</td></tr>';
-
-	} else if (pinholes.length > 1) {
-		for (i = 0; i < pinholes.length-1; ++i) {
-			rule = pinholes[i];
-			code += '<tr>';
-			code += '<td>' + rule[0] + '</td>';	// Remote IP
-			code += '<td>' + rule[1] + '</td>';	// Remote port
-			code += '<td>' + rule[2] + '</td>';	// Local IP
-			code += '<td>' + rule[3] + '</td>';	// Local Port
-			code += '<td>' + rule[4] + '</td>';	// Protocol
-			code += '</tr>';
-		}
+	if ("<% nvram_get("wan_upnp_enable"); %>" == "0" || "<% nvram_get("upnp_pinhole_enable"); %>" == "0") {
+		code += '<tr><td colspan="6"><span>Service is currently disabled. Can be enabled <a href="Advanced_WAN_Content.asp" style="text-decoration: underline;">here</a>.</span></td></tr>';
 	} else {
-		code += '<tr><td colspan="5"><span>No pinhole configured.</span></td></tr>';
+		if (pinholesarray.length > 1) {
+			for (i = 0; i < pinholesarray.length-1; ++i) {
+				line = pinholesarray[i];
+				code += '<td>' + line[0] + '</td>';
+				code += '<td>' + line[1] + '</td>';
+				code += '<td>' + line[2] + '</td>';
+				code += '<td>' + line[3] + '</td>';
+				code += '<td>' + line[4] + '</td>';
+
+				timestamp=new Date(line[5] * 1000);
+				currtime=new Date().getTime();
+				timeleftsec=(timestamp - currtime) / 1000;
+				Hours = Math.floor((timeleftsec / 3600));
+				Minutes = Math.floor(timeleftsec % 3600 / 60);
+				Seconds = Math.floor(timeleftsec % 60);
+				code += '<td>' + Hours + "h " + Minutes + "m "+ Seconds + "s" + '</td>';
+				code += '</tr>';
+			}
+		} else {
+			code += '<tr><td colspan="6"><span>No active port mappings.</span></td></tr>';
+		}
 	}
 
 	code += '</tr></table>';
 	document.getElementById("pinholesblock").innerHTML = code;
 }
-
 
 </script>
 </head>

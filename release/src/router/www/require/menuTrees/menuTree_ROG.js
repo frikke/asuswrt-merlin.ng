@@ -503,6 +503,10 @@ define(function(){
 					retArray.push("AiProtection_AdBlock.asp");
 				}
 
+				if(!wifiRadar_support){
+					retArray.push("WiFi_Insight.asp");
+				}
+
 				if(!bwdpi_mals_support){
 					retArray.push("AiProtection_MaliciousSitesBlocking.asp");
 				}
@@ -630,7 +634,7 @@ define(function(){
 					retArray.push("Advanced_Notification_Content.asp");
 				}
 
-				if(!smart_connect_support){
+				if(!smart_connect_support && !smart_connect_v2_support){
 					retArray.push("Advanced_Smart_Connect.asp");
 				}
 				
@@ -713,9 +717,9 @@ define(function(){
 						retArray.push("Captive_Portal_Advanced.asp");
 				}
 
-//				if(!cooler_support){
-//					retArray.push("Advanced_PerformanceTuning_Content.asp");
-//				}
+				if(!cooler_support){
+					retArray.push("Advanced_PerformanceTuning_Content.asp");
+				}
 
 				if(!rrsut_support)
 					retArray.push("cloud_router_sync.asp");

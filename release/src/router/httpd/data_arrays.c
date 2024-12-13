@@ -123,81 +123,105 @@ int
 ej_ipv6_pinhole_array(int eid, webs_t wp, int argc, char_t **argv)
 {
 	FILE *fp;
-	char *ipt_argv[] = {"ip6tables", "-nxL", "UPNP", NULL};
-	char line[256], tmp[256];
-	char target[16], proto[16];
-	char src[45];
-	char dst[45];
-	char *sport, *dport, *ptr, *val;
+	char proto[4], raddr[45], rport[6], iaddr[45], iport[6], timestamp[15], desc[200], desc2[256];
+	char line[256];
 	int ret = 0;
+	char *token, *line_dup;
+	int len, count;
 
-	ret += websWrite(wp, "var pinholes = ");
+	ret = websWrite(wp, "var pinholesarray = [");
 
-        if (!(ipv6_enabled() && is_routing_enabled())) {
-                ret += websWrite(wp, "[];\n");
-                return ret;
-        }
-
-	_eval(ipt_argv, ">/tmp/pinhole.log", 10, NULL);
-
-	fp = fopen("/tmp/pinhole.log", "r");
-	if (fp == NULL) {
-		ret += websWrite(wp, "[];\n");
+	if (!(ipv6_enabled() && is_routing_enabled())) {
+		ret += websWrite(wp, "[]];\n");
 		return ret;
 	}
 
-	ret += websWrite(wp, "[");
+	killall("miniupnpd", SIGUSR2);
+	sleep(1);
+
+	fp = fopen("/tmp/upnp.leases6", "r");
+	if (fp == NULL) {
+		ret += websWrite(wp, "[]];\n");
+		return ret;
+	}
 
 	while (fgets(line, sizeof(line), fp) != NULL)
 	{
-		tmp[0] = '\0';
-		if (sscanf(line,
-		    "%15s%*[ \t]"		// target
-		    "%15s%*[ \t]"		// prot
-		    "%44[^/]/%*d%*[ \t]"	// source
-		    "%44[^/]/%*d%*[ \t]"	// destination
-		    "%255[^\n]",		// options
-		    target, proto, src, dst, tmp) < 5) continue;
+// TCP;2600:1000:100:200:300:1234:5678:9abc;40003;::;0;1;1710906282;IGD2 pinhole
 
-		if (strcmp(target, "ACCEPT")) continue;
-
-		/* uppercase proto */
-		for (ptr = proto; *ptr; ptr++)
-			*ptr = toupper(*ptr);
-
-		/* parse source */
-		if (strcmp(src, "::") == 0)
-			strcpy(src, "ALL");
-
-		/* parse destination */
-		if (strcmp(dst, "::") == 0)
-			strcpy(dst, "ALL");
-
-		/* parse options */
-		sport = dport = "";
-		ptr = tmp;
-		while ((val = strsep(&ptr, " ")) != NULL) {
-			if (strncmp(val, "dpt:", 4) == 0)
-				dport = val + 4;
-			if (strncmp(val, "spt:", 4) == 0)
-				sport = val + 4;
-			else if (strncmp(val, "dpts:", 5) == 0)
-				dport = val + 5;
-			else if (strncmp(val, "spts:", 5) == 0)
-				sport = val + 5;
+		line_dup = strdup(line);
+			if (line_dup == NULL) {
+			break;
 		}
 
-		ret += websWrite(wp,
-			"[\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"],\n",
-			src, sport, dst, dport, proto);
+		count = 0;
+		while ((count < 8) && (token = strsep(&line_dup, ";")) != NULL) {
+
+			switch (count) {
+				case 0:
+					strlcpy(proto, token, sizeof(proto));
+					break;
+				case 1:
+		                        strlcpy(iaddr, token, sizeof(iaddr));
+		                        break;
+				case 2:
+		                        strlcpy(iport, token, sizeof(iport));
+		                        break;
+				case 3:
+		                        strlcpy(raddr, token, sizeof(raddr));
+		                        break;
+				case 4:
+		                        strlcpy(rport, token, sizeof(rport));
+		                        break;
+				case 5:	// Skip UUID
+					break;
+				case 6:
+					strlcpy(timestamp, token, sizeof(timestamp));
+					count++;
+					// fallthrough so we get the remainder, even including delimiter chars
+				case 7:
+					token = strsep(&line_dup, "");
+					if (token)
+						strlcpy(desc, token, sizeof(desc));
+					else
+						strcpy(desc, "");
+					break;
+			}
+
+			count++;
+		}
+
+		if (count != 8) continue;	// Incomplete entry
+
+		len = strlen(desc);
+		if (len > 0 && desc[len-1] == '\n')
+			desc[len-1] = '\0';
+
+		if (str_escape_quotes(desc2, desc, sizeof(desc2)) == 0)
+			strlcpy(desc2, desc, sizeof(desc2));
+
+		/* parse remote ip */
+		if (raddr[0] == '\0' || strcmp(raddr, "::") == 0)
+			strcpy(raddr, "ANY");
+
+		/* parse internal ip */
+		if (iaddr[0] == '\0' || strcmp(iaddr, "::") == 0)
+			strcpy(iaddr, "ANY");
+
+		/* parse remote port */
+		if (strcmp(rport, "0") == 0)
+			strcpy(rport, "ANY");
+
+		ret += websWrite(wp, "[\"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\"],\n",
+		                      proto, raddr, rport, iaddr, iport, timestamp, desc2);
+
+		free(line_dup);
 	}
+
 	ret += websWrite(wp, "[]];\n");
 
 	fclose(fp);
-	unlink("/tmp/pinhole.log");
-
 	return ret;
-
 }
 #endif
 #endif
@@ -224,6 +248,8 @@ ej_get_upnp_array(int eid, webs_t wp, int argc, char_t **argv)
 
 	while (fgets(line, sizeof(line), fp) != NULL)
 	{
+		desc[0] = '\0';
+
 		if (sscanf(line,
 			"%3[^:]:"
 			"%5[^:]:"
@@ -231,7 +257,7 @@ ej_get_upnp_array(int eid, webs_t wp, int argc, char_t **argv)
 			"%5[^:]:"
 			"%14[^:]:"
 			"%199[^\n]",
-			proto, eport, iaddr, iport, timestamp, desc) < 6) continue;
+			proto, eport, iaddr, iport, timestamp, desc) < 5) continue;
 
 		if (str_escape_quotes(desc2, desc, sizeof(desc2)) == 0)
 			strlcpy(desc2, desc, sizeof(desc2));
@@ -672,8 +698,129 @@ ej_lan_ipv6_network_array(int eid, webs_t wp, int argc, char_t **argv)
 	ret += websWrite(wp, "[]];\n");
 	return ret;
 }
+
+int
+ej_lan_ipv6_clients_array(int eid, webs_t wp, int argc, char_t **argv)
+{
+	FILE *fp;
+	char buf[64+32+8192+1];
+	char addrbuf[64];
+	char *hostname, *macaddr;
+	int ret = 0, len;
+
+	ret += websWrite(wp, "var ipv6clientarray = {};\n");
+
+	if (!(ipv6_enabled() && is_routing_enabled()))
+		return ret;
+
+	/* Refresh lease file to get actual expire time */
+	killall("dnsmasq", SIGUSR2);
+	usleep(100 * 1000);
+
+	get_ipv6_client_info();
+	get_ipv6_client_list();
+
+	if ((fp = fopen(IPV6_CLIENT_LIST, "r")) == NULL) {
+		_dprintf("can't open %s: %s", IPV6_CLIENT_LIST, strerror(errno));
+		return ret;
+	}
+
+	while (fgets(buf, sizeof(buf), fp) != NULL) {
+		char *ptr = buf;
+
+		ptr = strsep(&ptr, "\n");
+		hostname = strsep(&ptr, " ");
+		macaddr = strsep(&ptr, " ");
+		if (!macaddr || *macaddr == '\0' ||
+		    !ptr || *ptr == '\0' ||
+		    !strcmp(hostname, "*") ||
+		    !strcmp(hostname, "<unknown>"))
+			continue;
+
+		if (strlen(hostname) > 32)
+			sprintf(hostname + 29, "...");
+
+		while (ptr && *ptr) {
+			char *next = strsep(&ptr, ",\n");
+			if (next && *next) {
+				/* Workaround - TrendMicro truncates last two bytes, and we pad them with "00" to generate a valid IP  */
+				strlcpy(addrbuf, next, sizeof(addrbuf));
+				len = strlen(addrbuf);
+				if (len > 2) {
+					addrbuf[len-1] = '0';
+					addrbuf[len-2] = '0';
+				}
+				ret += websWrite(wp, "ipv6clientarray[\"%s\"] = \"%s\";\n", addrbuf, hostname);
+			}
+		}
+	}
+	fclose(fp);
+
+	return ret;
+}
 #endif
 
+
+#ifdef RTCONFIG_BWDPI
+int parseTcFilter(webs_t wp, const char *interface) {
+	char command[256];
+	char buffer[1024];
+	int foundmark=-1, foundflowid=-1, lastmark=-1;
+	FILE *fp;
+	int ret;
+	char *mark = NULL;
+	char *flowid = NULL;
+	int value, value2;
+
+	ret = websWrite(wp, "var tcdata_filter_array = [];\n");
+
+	if (nvram_get_int("qos_type") != 1 || nvram_get_int("qos_enable") == 0)
+		return ret;
+
+	snprintf(command, sizeof(command), "tc filter show dev %s", interface);
+
+	if ((fp = popen(command, "r")) == NULL)
+		return ret;
+
+	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+		flowid = strstr(buffer, "flowid ");
+		if (flowid) {
+			sscanf(flowid, "flowid 1:%d", &foundflowid);
+			if (foundflowid < 10 || foundflowid > 20)
+				foundflowid = -1;
+				continue;
+		}
+
+		mark = strstr(buffer, "mark ");
+		if (mark) {
+			if (sscanf(mark, "mark %x %x", &value, &value2) != 2 || value2 != 0xc03f0000) {
+				foundflowid = -1;
+				continue;
+			}
+			foundmark = (value & 0x3F0000)/0xFFFF;
+			if (foundmark == lastmark) {
+				foundmark += 50;
+			}
+		}
+
+		if (foundflowid != -1 && foundmark != -1) {
+			ret += websWrite(wp, "tcdata_filter_array[%d] = %d;\n", foundmark,foundflowid);
+			lastmark = foundmark;
+			foundflowid = -1;
+			foundmark = -1;
+		}
+	}
+
+	pclose(fp);
+	return ret;
+}
+
+
+int ej_tcfilter_array(int eid, webs_t wp, int argc, char_t **argv) {
+
+	return parseTcFilter(wp, "br0");
+}
+#endif
 
 int ej_tcclass_dump_array(int eid, webs_t wp, int argc, char_t **argv) {
 	FILE *fp;
@@ -725,6 +872,7 @@ int ej_tcclass_dump_array(int eid, webs_t wp, int argc, char_t **argv) {
 	        }
 		unlink("/tmp/tcclass.txt");
 	}
+
 	return ret;
 }
 
@@ -1058,13 +1206,12 @@ void ctvbuf(FILE *f) {
 int ej_connlist_array(int eid, webs_t wp, int argc, char **argv) {
 	FILE *fp;
 	char line[100];
-	int firstline = 1;
 	char proto[6], address[16], dest[16], state[15], port1[6], port2[6];
 	int ret = 0;
 
 	ret += websWrite(wp, "var connarray = [");
 
-	system("/usr/sbin/netstat-nat -r state -xn > /tmp/connect.log 2>&1");
+	system("/usr/sbin/netstat-nat -xno > /tmp/connect.log 2>&1");
 
 	fp = fopen("/tmp/connect.log", "r");
 	if (fp == NULL) {
@@ -1073,10 +1220,6 @@ int ej_connlist_array(int eid, webs_t wp, int argc, char **argv) {
 	}
 
 	while (fgets(line, sizeof(line), fp)) {
-		if (firstline) {
-			firstline = 0;
-			continue;
-		}
 		if (!strncmp(line,"icmp",4)) {
 			if (sscanf(line,
 			    "%5s%*[ \t]"

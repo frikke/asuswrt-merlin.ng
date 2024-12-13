@@ -1,9 +1,9 @@
 /*
  *  Interface to linux dco networking code
  *
- *  Copyright (C) 2020-2023 Antonio Quartulli <a@unstable.cc>
- *  Copyright (C) 2020-2023 Arne Schwabe <arne@rfc2549.org>
- *  Copyright (C) 2020-2023 OpenVPN Inc <sales@openvpn.net>
+ *  Copyright (C) 2020-2024 Antonio Quartulli <a@unstable.cc>
+ *  Copyright (C) 2020-2024 Arne Schwabe <arne@rfc2549.org>
+ *  Copyright (C) 2020-2024 OpenVPN Inc <sales@openvpn.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2
@@ -23,8 +23,6 @@
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
-#elif defined(_MSC_VER)
-#include "config-msvc.h"
 #endif
 
 #if defined(ENABLE_DCO) && defined(TARGET_LINUX)
@@ -82,6 +80,12 @@ resolve_ovpn_netlink_id(int msglevel)
 {
     int ret;
     struct nl_sock *nl_sock = nl_socket_alloc();
+
+    if (!nl_sock)
+    {
+        msg(msglevel, "Allocating net link socket failed");
+        return -ENOMEM;
+    }
 
     ret = genl_connect(nl_sock);
     if (ret)
@@ -827,7 +831,7 @@ dco_update_peer_stat(struct context_2 *c2, struct nlattr *tb[], uint32_t id)
     if (tb[OVPN_GET_PEER_RESP_ATTR_LINK_RX_BYTES])
     {
         c2->dco_read_bytes = nla_get_u64(tb[OVPN_GET_PEER_RESP_ATTR_LINK_RX_BYTES]);
-        msg(D_DCO_DEBUG, "%s / dco_read_bytes: %lu", __func__,
+        msg(D_DCO_DEBUG, "%s / dco_read_bytes: " counter_format, __func__,
             c2->dco_read_bytes);
     }
     else
@@ -839,7 +843,7 @@ dco_update_peer_stat(struct context_2 *c2, struct nlattr *tb[], uint32_t id)
     if (tb[OVPN_GET_PEER_RESP_ATTR_LINK_TX_BYTES])
     {
         c2->dco_write_bytes = nla_get_u64(tb[OVPN_GET_PEER_RESP_ATTR_LINK_TX_BYTES]);
-        msg(D_DCO_DEBUG, "%s / dco_write_bytes: %lu", __func__,
+        msg(D_DCO_DEBUG, "%s / dco_write_bytes: " counter_format, __func__,
             c2->dco_write_bytes);
     }
     else
@@ -851,7 +855,7 @@ dco_update_peer_stat(struct context_2 *c2, struct nlattr *tb[], uint32_t id)
     if (tb[OVPN_GET_PEER_RESP_ATTR_VPN_RX_BYTES])
     {
         c2->tun_read_bytes = nla_get_u64(tb[OVPN_GET_PEER_RESP_ATTR_VPN_RX_BYTES]);
-        msg(D_DCO_DEBUG, "%s / tun_read_bytes: %lu", __func__,
+        msg(D_DCO_DEBUG, "%s / tun_read_bytes: " counter_format, __func__,
             c2->tun_read_bytes);
     }
     else
@@ -863,7 +867,7 @@ dco_update_peer_stat(struct context_2 *c2, struct nlattr *tb[], uint32_t id)
     if (tb[OVPN_GET_PEER_RESP_ATTR_VPN_TX_BYTES])
     {
         c2->tun_write_bytes = nla_get_u64(tb[OVPN_GET_PEER_RESP_ATTR_VPN_TX_BYTES]);
-        msg(D_DCO_DEBUG, "%s / tun_write_bytes: %lu", __func__,
+        msg(D_DCO_DEBUG, "%s / tun_write_bytes: " counter_format, __func__,
             c2->tun_write_bytes);
     }
     else

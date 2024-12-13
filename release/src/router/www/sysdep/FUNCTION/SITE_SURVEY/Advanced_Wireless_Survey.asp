@@ -10,9 +10,13 @@
 <title><#Web_Title#> - Site Survey</title>
 <link rel="stylesheet" type="text/css" href="/form_style.css">
 <link rel="stylesheet" type="text/css" href="index_style.css">
-<link rel="stylesheet" href="./mobile/css/qis.css"></link>
-<link rel="stylesheet" href="./mobile/css/icon.css"></link>
+<link rel="stylesheet" href="/mobile/css/icon.css"></link>
 <style>
+body{
+.ap_icon{
+        width: 38px;
+        height: 32px;
+}
 p{
 	font-weight: bolder;
 }
@@ -61,14 +65,21 @@ function initial(){
 function doSorter(_flag, _Method, flip){
 	if(aplist.length > 1){
 
+		// Flip sort order (unless told not to)
+		if (sorter.indexFlag == _flag && flip) {
+			sorter.sortingMethod = (sorter.sortingMethod == "increase") ? "decrease" : "increase";
+		}
+		else if (_flag == 5) {
+			sorter.sortingMethod = "decrease";
+		}
+		else {
+			sorter.sortingMethod = "increase";
+		}
 		// Set field to sort
 		sorter.indexFlag = _flag;
 
 		// Remember data type for this field
 		sorter.lastType = _Method;
-
-		// Flip sort order (unless told not to)
-		if (flip) sorter.sortingMethod = (sorter.sortingMethod == "increase") ? "decrease" : "increase";
 
 		// doSorter
 		eval("aplist.sort(sorter."+_Method+"_"+sorter.sortingMethod+");");

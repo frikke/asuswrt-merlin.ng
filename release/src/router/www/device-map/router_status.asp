@@ -351,7 +351,7 @@ function detect_CPU_RAM(){
 		require(['/require/modules/makeRequest.js'], function(makeRequest){
 			makeRequest.start('/cpu_ram_status.asp', function(xhr){				
 				render_CPU(cpuInfo);
-				render_RAM(memInfo.total, memInfo.free, memInfo.used);
+				render_RAM(memInfo);
 				setTimeout("detect_CPU_RAM();", 2000);
 			}, function(){});
 		});
@@ -391,14 +391,14 @@ function detect_CPU_RAM(){
 					var pt = "";
 					var used_percentage = total_MB = free_MB = used_MB = 0;
 					total_MB = Math.round(memory.total/1024);
-					free_MB = Math.round(memory.free/1024);
-					used_MB = Math.round(memory.used/1024);
+					free_MB = Math.round(memory.simple_free/1024);
+					used_MB = Math.round(memory.simple_used/1024);
 					
 					$("#ram_total_info").html(total_MB + " MB");
 					$("#ram_free_info").html(free_MB + " MB");
 					$("#ram_used_info").html(used_MB + " MB");
 
-					used_percentage = Math.round((memory.used/memory.total)*100);
+					used_percentage = Math.round((used_MB/total_MB)*100);
 					$("#ram_bar").css("width", used_percentage + "%");
 					$("#ram_quantification").html(used_percentage + "%");
 					ram_usage_array.push(100 - used_percentage);
@@ -555,10 +555,16 @@ function get_ethernet_ports() {
 
 				var $error_port_list_bg = $("<div>").appendTo($hint_text_bg);
 				$.each(_error_port_list, function(index, port_item){
-					var display_name = ((port_item.special_port_name == "") ? port_item.label_port_name : port_item.special_port_name);
+					let port_text = "";
+					if(port_item.ui_display != undefined && port_item.ui_display != ""){
+						port_text = port_item.ui_display;
+					}
+					else{
+						port_text = port_item.special_port_name + " (" + port_item.label_port_name + ")";
+					}
 					var $port_item = $("<div>").css({"display":"flex", "flex-wrap":"nowrap", "align-items":"baseline"}).appendTo($error_port_list_bg);
 					$("<div>").css({"width":"12px", "height":"12px", "background":"#ECC000", "margin":"0 6px 0 10px"}).appendTo($port_item);
-					$("<div>").html(htmlEnDeCode.htmlEncode(display_name)).appendTo($port_item);
+					$("<div>").html(htmlEnDeCode.htmlEncode(port_text)).appendTo($port_item);
 				});
 				$("<div>").css({"background":"rgb(255 255 255 / 20%)", "height":"1px", "margin":"10px 0"}).appendTo($hint_text_bg);
 				$("<div>").css({"margin-bottom":"6px"}).html("<#Things_To_Check#> :").appendTo($hint_text_bg);
@@ -628,14 +634,34 @@ function get_ethernet_ports() {
 
 						if(port_item.cap_support.WAN){
 							$("<div>").addClass("wan_icon").appendTo($port_icon);
-							if(port_item.special_port_name != "")
-								$("<span>").addClass("port_text").html(htmlEnDeCode.htmlEncode(port_item.special_port_name)).appendTo($port_bg);
+							let port_text = "";
+							if(port_item.ui_display != undefined && port_item.ui_display != ""){
+								port_text = port_item.ui_display;
+							}
+							else{
+								if(port_item.special_port_name != ""){
+									port_text = port_item.special_port_name;
+								}
+							}
+							if(port_text != "")
+								$("<span>").addClass("port_text").html(htmlEnDeCode.htmlEncode(port_text)).appendTo($port_bg);
 						}
 						else if(port_item.cap_support.LAN){
-							if(port_item.special_port_name != "")
-								$("<span>").addClass("port_text").html(htmlEnDeCode.htmlEncode(port_item.special_port_name)).appendTo($port_bg);
-							else
-								$("<div>").addClass("lan_idx").html(htmlEnDeCode.htmlEncode(port_item.label_idx)).appendTo($port_icon);
+							let port_text = "";
+							let port_idx = "";
+							if(port_item.ui_display != undefined && port_item.ui_display != ""){
+								port_text = port_item.ui_display;
+							}
+							else{
+								if(port_item.special_port_name != ""){
+									port_text = port_item.special_port_name;
+								}
+								port_idx = port_item.label_idx;
+							}
+							if(port_text != "")
+								$("<span>").addClass("port_text").html(htmlEnDeCode.htmlEncode(port_text)).appendTo($port_bg);
+							if(port_idx != "")
+								$("<div>").addClass("lan_idx").html(htmlEnDeCode.htmlEncode(port_idx)).appendTo($port_icon);
 						}
 						else if(port_item.cap_support.USB){
 							$port_icon.addClass("USB");

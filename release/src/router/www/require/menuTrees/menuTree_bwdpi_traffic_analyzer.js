@@ -368,6 +368,10 @@ define(function(){
 					retArray.push("DNSDirector.asp");
 				}
 
+				if(!wifiRadar_support){
+					retArray.push("WiFi_Insight.asp");
+				}
+
 				if(!multissid_support){
 					retArray.push("menu_GuestNetwork");
 				}
@@ -536,6 +540,9 @@ define(function(){
 					retArray.push("AiProtection_Key_Guard.asp");
 					retArray.push("AiProtection_AdBlock.asp");
 				}
+				if(!wifiRadar_support){
+					retArray.push("WiFi_Insight.asp");
+				}
 
 				if(!bwdpi_mals_support){
 					retArray.push("AiProtection_MaliciousSitesBlocking.asp");
@@ -689,7 +696,7 @@ define(function(){
 					retArray.push("Advanced_Notification_Content.asp");
 				}
 
-				if(!smart_connect_support || Qcawifi_support){
+				if((!smart_connect_support && !smart_connect_v2_support) || Qcawifi_support || Rawifi_support){
 					retArray.push("Advanced_Smart_Connect.asp");
 				}
 				
@@ -782,9 +789,9 @@ define(function(){
 						retArray.push("Captive_Portal_Advanced.asp");
 				}
 
-//				if(!cooler_support){
-//					retArray.push("Advanced_PerformanceTuning_Content.asp");
-//				}
+				if(!cooler_support){
+					retArray.push("Advanced_PerformanceTuning_Content.asp");
+				}
 
 				if(!amesh_support)
 					retArray.push("Advanced_Roaming_Block_Content.asp");

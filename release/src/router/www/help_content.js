@@ -135,7 +135,7 @@ helpcontent[7] = new Array("",
 							 "<#IPConnection_BattleNet_itemdesc#>",
 							 "<#Layer3Forwarding_x_STB_itemdesc#>",	//21
 							 "<#hwnat_desc#>",	
-							 "<#IPConnection_UPnP_itemdesc#>",
+							 "Enable automatic port forwarding through UPnP IGD & PCP/NAT-PMP.",
 							 "<#IPConnection_PortRange_itemdesc#>",
 							 "<#IPConnection_LocalIP_itemdesc#>",
 							 "<#IPConnection_LocalPort_itemdesc#>",
@@ -367,7 +367,7 @@ helpcontent[32] = new Array("",
 							"Enable this option allows VPN clients use the Internet from your router instead of the one at their location.",/*untranslated*/
 							"Virtual network device type. TUN devices encapsulate IPv4 or IPv6 (OSI Layer 3) while TAP devices encapsulate Ethernet 802.3 (OSI Layer 2).",/*untranslated*/
 							"Choose the communicating protocol with remote host.",/*untranslated*/
-							"Set the port number to bind. The current default of 1194 represents the official IANA port number assignment for OpenVPN.",/*untranslated*/
+							"",
 							"<b>TLS</b>: OpenVPN runs in server mode and SSL/TLS authentication will be used;<br> <b>Static Key</b>: OpenVPN runs in P2P mode.",/*untranslated*/
 							"The bits size of automatically generated certificate.",/*untranslated*/
 							"Use username/password only allows client connect to server without certification and authentication by username/password. Be aware that using this directive is less secure than requiring certificates.",/*untranslated*/
@@ -415,9 +415,9 @@ helpcontent[35] = new Array("",
 helpcontent[50] = new Array("",
 				"<#IPConnection_LocalIP_itemdesc#> or fixed Interface (Device) ID starting with ::<br/>A fixed Interface ID is commonly an EUI-64 address.",
 				"On ARM routers, Asus regularly flushes caches, which can hurt performance while preserving a maximum amount of available RAM.",
-				"By default miniupnpd runs in secure mode, which prevents a client to forward a port to another IP than its own.",
+				"Secure mode is enabled by default, which prevents a client from forwarding or mapping a port to another IP than its own.",
 				"Some IPv6-enabled Comcast customers are getting flooded by Neighbour Solicitation traffic.  This option allows you to filter out this unwanted traffic.",
-				"",
+				"Enabling IGDv2 support allows clients to create IPv6 firewall pinholes through UPnP.  However various clients are incompatible with IGDv2, so leave this disabled if you are experiencing UPnP issues.<br><br>You might need to reboot your clients when changing this setting.",
 				"",
 				"Some ISPs like Sky (UK) require a clientid to be provided for customer authentication.",
 				"Some ISPs like SFR (FR) require a vendor class ID to be provided for identification purposes.",
